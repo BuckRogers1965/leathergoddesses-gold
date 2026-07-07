@@ -73,6 +73,19 @@
   #map circle { cursor: pointer; stroke: var(--bg); stroke-width: 1.5; }
   #map line { stroke: #4a4e5c; stroke-width: 1; }
   #map line.cond { stroke-dasharray: 4 3; stroke: #7a6a3a; }
+  #map circle.unvisited { opacity: .3; }
+  #map circle.cur { stroke: var(--accent); stroke-width: 2.5; }
+  #map circle.halo { fill: none; stroke: var(--accent); stroke-width: 1.5;
+                     opacity: .45; pointer-events: none; }
+  #map polyline.trail { fill: none; stroke: var(--accent); stroke-width: 1.5;
+                        opacity: .5; stroke-dasharray: 2 3; }
+  #map text.curlbl { fill: var(--accent); font-weight: bold; }
+  #maptip { position: absolute; display: none; max-width: 340px; z-index: 5;
+            background: rgba(29,31,38,.97); border: 1px solid var(--border);
+            border-radius: 8px; padding: 8px 12px; font-size: 12.5px;
+            line-height: 1.45; pointer-events: none; }
+  #maptip b { color: var(--accent); }
+  #maptip .rgn { color: var(--dim); }
   .refs a { margin-right: 10px; }
   #playwrap { flex: 1; display: none; flex-direction: column; min-width: 0; }
   #term { flex: 1; overflow-y: auto; padding: 18px 24px;
@@ -116,6 +129,7 @@
   <div id="mapwrap">
     <svg id="map"></svg>
     <div id="maplegend"></div>
+    <div id="maptip"></div>
   </div>
   <div id="playwrap">
     <div id="term"></div>
@@ -470,16 +484,10 @@ function renderDetail() {
 }
 
 /* ------------------------------- map -------------------------------- */
-let mapBuilt = false, mapRegions = null;
-function buildMap() {
-  const rooms = Object.values(W.rooms).filter(r => REGION_COLOR[REGION(r.file)]);
-  if (!mapRegions) {
-    mapRegions = {};
-    for (const r of rooms) mapRegions[REGION(r.file)] = true;
-  }
-  const active = rooms.filter(r => mapRegions[REGION(r.file)]);
+let mapBuilt = false, mapRegions = null, mapCache = null;
+function layoutMap(active) {
   const idx = {}; active.forEach((r, i) => idx[r.name] = i);
-  const nodes = active.map(r => ({ r, x: Math.random() * 1000, y: Math.random() * 700, vx: 0, vy: 0 }));
+  const nodes = active.map(r => ({ r, x: 0, y: 0, vx: 0, vy: 0 }));
   const edges = [];
   for (const r of active) for (const ex of r.exits)
     if (ex.to && idx[ex.to] !== undefined && idx[ex.to] !== idx[r.name])
@@ -531,6 +539,22 @@ function buildMap() {
       nd.vx *= .5; nd.vy *= .5;
     }
   }
+  return { nodes, E };
+}
+
+function buildMap() {
+  const rooms = Object.values(W.rooms).filter(r => REGION_COLOR[REGION(r.file)]);
+  if (!mapRegions) {
+    mapRegions = {};
+    for (const r of rooms) mapRegions[REGION(r.file)] = true;
+  }
+  const active = rooms.filter(r => mapRegions[REGION(r.file)]);
+  const key = active.map(r => r.name).join(",");
+  if (!mapCache || mapCache.key !== key)      // layout once; reuse across visits
+    mapCache = { key, ...layoutMap(active) };
+  const { nodes, E } = mapCache;
+  const byName = {};
+  nodes.forEach(nd => byName[nd.r.name] = nd);
   // render svg
   const svg = $("#map");
   let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
@@ -538,19 +562,39 @@ function buildMap() {
     minX = Math.min(minX, nd.x); maxX = Math.max(maxX, nd.x);
     minY = Math.min(minY, nd.y); maxY = Math.max(maxY, nd.y);
   }
-  svg.setAttribute("viewBox", `${minX - 80} ${minY - 60} ${maxX - minX + 160} ${maxY - minY + 120}`);
+  const fullW = maxX - minX + 160, fullH = maxY - minY + 120;
+  svg.dataset.fullView = `${minX - 80} ${minY - 60} ${fullW} ${fullH}`;
+  // center on the player's room; before play begins, on WARNING — the
+  // room the game itself starts in (<SETG HERE ,WARNING> in misc.zil)
+  const cur = (playRoom && byName[playRoom]) || byName["WARNING"];
+  if (cur) {
+    const w = Math.max(fullW * 0.35, 320), h = Math.max(fullH * 0.35, 240);
+    svg.setAttribute("viewBox", `${cur.x - w / 2} ${cur.y - h / 2} ${w} ${h}`);
+  } else {
+    svg.setAttribute("viewBox", svg.dataset.fullView);
+  }
   let s = "";
   for (const e of E) {
     const a = nodes[e.a], b = nodes[e.b];
     s += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"
           class="${e.cond ? "cond" : ""}"/>`;
   }
+  // breadcrumb trail of this play session's route
+  const trailPts = playTrail.filter(n => byName[n])
+                            .map(n => `${byName[n].x},${byName[n].y}`);
+  if (trailPts.length > 1)
+    s += `<polyline class="trail" points="${trailPts.join(" ")}"/>`;
+  const dimOthers = visitedRooms.size > 0;
   for (const nd of nodes) {
     const col = REGION_COLOR[REGION(nd.r.file)] || "#888";
-    s += `<circle cx="${nd.x}" cy="${nd.y}" r="7" fill="${col}"
-          onclick="go('room','${nd.r.name}')">
-          <title>${esc(nd.r.desc || nd.r.name)}</title></circle>
-          <text x="${nd.x + 9}" y="${nd.y + 3}">${esc(nd.r.desc || nd.r.name)}</text>`;
+    const here = nd.r.name === playRoom;
+    const cls = here ? "cur" : visitedRooms.has(nd.r.name) ? "visited"
+              : dimOthers ? "unvisited" : "";
+    if (here) s += `<circle cx="${nd.x}" cy="${nd.y}" r="14" class="halo"/>`;
+    s += `<circle cx="${nd.x}" cy="${nd.y}" r="${here ? 9 : 7}" fill="${col}"
+          class="${cls}" data-room="${nd.r.name}"
+          onclick="go('room','${nd.r.name}')"/>
+          <text x="${nd.x + 9}" y="${nd.y + 3}"${here ? ' class="curlbl"' : ""}>${esc(nd.r.desc || nd.r.name)}</text>`;
   }
   svg.innerHTML = s;
   // legend
@@ -558,16 +602,74 @@ function buildMap() {
     `<label><input type="checkbox" ${mapRegions[g] ? "checked" : ""}
        onchange="toggleRegion('${g}')">
        <span style="color:${REGION_COLOR[g]}">●</span> ${g}</label>`).join("")
-    + `<div style="margin-top:6px;color:var(--dim)">— exit &nbsp; ┄ conditional</div>`;
+    + `<div style="margin-top:6px;color:var(--dim)">— exit &nbsp; ┄ conditional</div>`
+    + (playRoom && W.rooms[playRoom]
+       ? `<div style="margin-top:6px">&#128205; <a class="xr room"
+            onclick="go('room','${playRoom}')">${esc(W.rooms[playRoom].desc || playRoom)}</a></div>`
+       : "")
+    + `<div style="margin-top:4px"><a class="xr" onclick="mapFullView()">&#10530; full map</a></div>`;
   mapBuilt = true;
 }
 window.toggleRegion = g => { mapRegions[g] = !mapRegions[g]; buildMap(); };
+window.mapFullView = () => {
+  const svg = $("#map");
+  if (svg.dataset.fullView) svg.setAttribute("viewBox", svg.dataset.fullView);
+};
+
+// room tooltip: LDESC if the source declares one, else the first long
+// prose string in the room's action routine (where M-LOOK text lives)
+// hand-curated tooltips for rooms whose text isn't statically extractable
+// (WARNING's is printed by the GO bootstrap routine, misc.zil:192)
+const TIP_OVERRIDES = {
+  WARNING:
+`   Some material in this story may not be suitable for children, especially the parts involving sex, which no one should know anything about until reaching the age of eighteen (twenty-one in certain states). This story is also unsuitable for censors, members of the Moral Majority, and anyone else who thinks that sex is dirty rather than fun.
+   The attitudes expressed and language used in this story are representative only of the views of the author, and in no way represent the views of Infocom, Inc. or its employees, many of whom are children, censors, and members of the Moral Majority. (But very few of whom, based on last year's Christmas Party, think that sex is dirty.)
+   By now, all the folks who might be offended by LEATHER GODDESSES OF PHOBOS have whipped their disk out of their drive and, evidence in hand, are indignantly huffing toward their dealer, their lawyer, or their favorite repression-oriented politico. So... Hit the RETURN/ENTER key to begin!`
+};
+
+function roomLookText(r) {
+  if (TIP_OVERRIDES[r.name]) return TIP_OVERRIDES[r.name];
+  if (r.ldesc) return r.ldesc;
+  const rt = r.action && W.routines[r.action];
+  if (rt) {
+    const m = rt.source.match(/"(?:[^"\\]|\\.){60,}?"/);
+    if (m) return m[0].slice(1, -1).replace(/\\"/g, '"').replace(/\s+/g, " ");
+  }
+  return null;
+}
+(() => {
+  const svg = $("#map"), tip = $("#maptip"), wrap = $("#mapwrap");
+  svg.addEventListener("mouseover", e => {
+    const name = e.target.dataset && e.target.dataset.room;
+    if (!name || !W.rooms[name]) return;
+    const r = W.rooms[name];
+    let text = roomLookText(r) || "";
+    if (!TIP_OVERRIDES[name] && text.length > 300) text = text.slice(0, 300) + "…";
+    tip.innerHTML = `<b>${esc(r.desc || r.name)}</b>
+      <span class="rgn">· ${esc(REGION(r.file))}</span>
+      ${text ? `<br>${esc(text).replace(/\n/g, "<br>")}` : ""}`;
+    tip.style.display = "block";
+  });
+  svg.addEventListener("mousemove", e => {
+    if (tip.style.display !== "block") return;
+    const box = wrap.getBoundingClientRect();
+    let x = e.clientX - box.left + 14, y = e.clientY - box.top + 12;
+    if (x + tip.offsetWidth > box.width - 8) x = x - tip.offsetWidth - 28;
+    if (y + tip.offsetHeight > box.height - 8) y = y - tip.offsetHeight - 24;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  });
+  svg.addEventListener("mouseout", e => {
+    if (e.target.dataset && e.target.dataset.room) tip.style.display = "none";
+  });
+})();
 
 // pan & zoom
 (() => {
   const svg = $("#map");
   let drag = null;
   svg.addEventListener("mousedown", e => {
+    $("#maptip").style.display = "none";
     drag = { x: e.clientX, y: e.clientY, vb: svg.getAttribute("viewBox").split(" ").map(Number) };
   });
   window.addEventListener("mousemove", e => {
@@ -590,6 +692,7 @@ window.toggleRegion = g => { mapRegions[g] = !mapRegions[g]; buildMap(); };
 
 /* ------------------------------- play ------------------------------- */
 let playId = null, playBusy = false, playRoom = null;
+let visitedRooms = new Set(), playTrail = [];
 
 // room DESC text -> room name(s), for spotting the current room in output
 const DESC_INDEX = {};
@@ -616,6 +719,8 @@ function detectRoom(text) {
   }
   if (!found) return;
   playRoom = found;
+  visitedRooms.add(found);
+  if (playTrail[playTrail.length - 1] !== found) playTrail.push(found);
   selected = found;                     // Rooms tab opens on this room
   $("#playloc").innerHTML =
     `<a class="xr room" onclick="go('room','${found}')">&#128205; ${esc(W.rooms[found].desc)}</a>`;
@@ -644,6 +749,8 @@ async function playStart(restart) {
   $("#term").textContent = "";
   $("#playloc").textContent = "";
   playRoom = null;
+  visitedRooms.clear();
+  playTrail.length = 0;
   termAppend("[starting game…]\n\n", "echo");
   playBusy = true;
   try {
