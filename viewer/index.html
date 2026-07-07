@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LGOP World Browser</title>
+<style>
+  :root {
+    --bg: #14151a; --panel: #1d1f26; --panel2: #23262f;
+    --fg: #d8dae2; --dim: #8b8e99; --accent: #e8a33d;
+    --link: #6db3f2; --border: #32353f;
+    --str: #98c379; --com: #5c6370; --kw: #c678dd; --glob: #e06c75;
+    --room-c: #e8a33d; --obj-c: #6db3f2; --rt-c: #98c379;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
+         height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+  header h1 { font-size: 15px; margin: 0; color: var(--accent); white-space: nowrap; }
+  nav button { background: none; border: none; color: var(--dim); font: inherit;
+               padding: 6px 10px; cursor: pointer; border-radius: 5px; }
+  nav button.on { color: var(--fg); background: var(--panel2); }
+  #search { flex: 1; max-width: 340px; background: var(--panel2); color: var(--fg);
+            border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; outline: none; }
+  #stats { color: var(--dim); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #sidebar { width: 300px; flex-shrink: 0; overflow-y: auto; background: var(--panel);
+             border-right: 1px solid var(--border); }
+  #sidebar .grp { padding: 8px 14px 2px; color: var(--dim); font-size: 11px;
+                  text-transform: uppercase; letter-spacing: .08em; position: sticky;
+                  top: 0; background: var(--panel); }
+  #sidebar .item { padding: 4px 14px; cursor: pointer; white-space: nowrap;
+                   overflow: hidden; text-overflow: ellipsis; }
+  #sidebar .item:hover { background: var(--panel2); }
+  #sidebar .item.sel { background: var(--panel2); color: var(--accent); }
+  #sidebar .item small { color: var(--dim); margin-left: 6px; }
+  #detail { flex: 1; overflow-y: auto; padding: 20px 28px; min-width: 0; }
+  #mapwrap { flex: 1; position: relative; display: none; }
+  #map { width: 100%; height: 100%; cursor: grab; }
+  #maplegend { position: absolute; top: 10px; left: 10px; background: rgba(29,31,38,.92);
+               border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
+               font-size: 12px; }
+  #maplegend label { display: block; cursor: pointer; }
+  h2 { color: var(--accent); margin: 0 0 2px; font-size: 20px; }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em;
+       color: var(--dim); margin: 22px 0 8px; }
+  .meta { color: var(--dim); font-size: 12px; margin-bottom: 14px; }
+  .meta a { color: var(--dim); }
+  a.xr { color: var(--link); text-decoration: none; cursor: pointer; }
+  a.xr:hover { text-decoration: underline; }
+  a.xr.room { color: var(--room-c); }
+  a.xr.routine { color: var(--rt-c); }
+  .tag { display: inline-block; background: var(--panel2); border: 1px solid var(--border);
+         border-radius: 4px; padding: 1px 7px; margin: 2px 4px 2px 0; font-size: 12px;
+         font-family: ui-monospace, monospace; }
+  table.exits { border-collapse: collapse; width: 100%; }
+  table.exits td, table.exits th { border-bottom: 1px solid var(--border);
+         padding: 5px 10px 5px 0; text-align: left; vertical-align: top; }
+  table.exits th { color: var(--dim); font-size: 11px; text-transform: uppercase; }
+  .cond { color: var(--str); font-family: ui-monospace, monospace; font-size: 12px; }
+  .msg { color: var(--dim); font-style: italic; }
+  pre.src { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+            padding: 14px 16px; overflow-x: auto; font: 12.5px/1.5 ui-monospace,
+            "SF Mono", Menlo, monospace; tab-size: 8; }
+  pre.src .s { color: var(--str); } pre.src .c { color: var(--com); font-style: italic; }
+  pre.src .k { color: var(--kw); } pre.src .g { color: var(--glob); }
+  .desc-quote { border-left: 3px solid var(--accent); padding: 2px 14px; margin: 8px 0;
+                color: #c9cbd4; font-style: italic; white-space: pre-wrap; }
+  .cols { display: flex; gap: 40px; flex-wrap: wrap; }
+  .empty { color: var(--dim); font-style: italic; }
+  #map text { font: 10px ui-monospace, monospace; fill: var(--fg); pointer-events: none; }
+  #map circle { cursor: pointer; stroke: var(--bg); stroke-width: 1.5; }
+  #map line { stroke: #4a4e5c; stroke-width: 1; }
+  #map line.cond { stroke-dasharray: 4 3; stroke: #7a6a3a; }
+  .refs a { margin-right: 10px; }
+  #playwrap { flex: 1; display: none; flex-direction: column; min-width: 0; }
+  #term { flex: 1; overflow-y: auto; padding: 18px 24px;
+          font: 14px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+          white-space: pre-wrap; word-break: break-word; }
+  #term .echo { color: var(--accent); }
+  #term .err { color: var(--glob); }
+  #playbar { display: flex; gap: 10px; align-items: center; padding: 10px 24px;
+             border-top: 1px solid var(--border); background: var(--panel); }
+  #playprompt { color: var(--accent); font-family: ui-monospace, monospace; }
+  #cmd { flex: 1; background: var(--panel2); color: var(--fg);
+         border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+         font: 14px ui-monospace, "SF Mono", Menlo, monospace; outline: none; }
+  #restart { background: var(--panel2); color: var(--dim); border: 1px solid
+             var(--border); border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+  #restart:hover { color: var(--fg); }
+  #playloc { white-space: nowrap; font-size: 13px; }
+  #playloc a { text-decoration: none; }
+  #playloc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Leather Goddesses of Phobos</h1>
+  <nav>
+    <button data-tab="map">Map</button>
+    <button data-tab="rooms" class="on">Rooms</button>
+    <button data-tab="objects">Objects</button>
+    <button data-tab="routines">Routines</button>
+    <button data-tab="globals">Globals</button>
+    <button data-tab="syntax">Syntax</button>
+    <button data-tab="vocab">Vocab</button>
+    <button data-tab="play">Play</button>
+  </nav>
+  <input id="search" placeholder="Search names, descriptions, source…">
+  <span id="stats"></span>
+</header>
+<main>
+  <div id="sidebar"></div>
+  <div id="detail"></div>
+  <div id="mapwrap">
+    <svg id="map"></svg>
+    <div id="maplegend"></div>
+  </div>
+  <div id="playwrap">
+    <div id="term"></div>
+    <div id="playbar">
+      <span id="playprompt">&gt;</span>
+      <input id="cmd" autocomplete="off" spellcheck="false"
+             placeholder="type a command and press Enter">
+      <span id="playloc" title="Current room — click to view its code"></span>
+      <button id="restart" title="Kill this game and start over">Restart</button>
+    </div>
+  </div>
+</main>
+<script src="world.js"></script>
+<script>
+const W = window.WORLD;
+const REGION = f => ({ "earth.zil": "Earth", "mars.zil": "Mars", "venus.zil": "Venus",
+  "cleveland.zil": "Cleveland", "spaceship.zil": "Spaceship", "phobos.zil": "Phobos",
+  "misc.zil": "Misc", "globals.zil": "Global scenery", "verbs.zil": "Verbs",
+  "parser.zil": "Parser", "hints.zil": "Hints", "syntax.zil": "Syntax",
+  "x1.zil": "Main" }[f] || f);
+const REGION_COLOR = { Earth: "#98c379", Mars: "#e06c75", Venus: "#c678dd",
+  Cleveland: "#61afef", Spaceship: "#56b6c2", Phobos: "#e8a33d", Misc: "#8b8e99" };
+
+let tab = "rooms", selected = null, query = "";
+
+const $ = s => document.querySelector(s);
+const esc = s => s == null ? "" : String(s).replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function kindOf(name) {
+  if (W.rooms[name]) return "room";
+  if (W.objects[name]) return "object";
+  if (W.routines[name]) return "routine";
+  if (W.globals[name]) return "global";
+  return null;
+}
+function link(name, cls) {
+  const k = cls || kindOf(name);
+  if (!k) return esc(name);
+  return `<a class="xr ${k}" onclick="go('${k}','${name}')">${esc(name)}</a>`;
+}
+window.go = (k, name) => {
+  tab = { room: "rooms", object: "objects", routine: "routines",
+          global: "globals", verb: "syntax", word: "vocab" }[k] || k;
+  selected = name;
+  render();
+  $("#detail").scrollTop = 0;
+};
+
+// decorate syntax/vocab entries for the sidebar (name/desc/file fields)
+for (const v of Object.values(W.syntax || {})) {
+  v.name = v.verb;
+  v.file = "syntax.zil";
+  v.desc = `${v.productions.length} pattern${v.productions.length === 1 ? "" : "s"}`
+    + (v.synonyms.length ? " · " + v.synonyms.join(" ") : "");
+}
+for (const w of Object.values(W.vocab || {})) {
+  w.name = w.word;
+  w.file = "syntax.zil";
+  w.desc = [...new Set(w.roles.map(r => r.kind + (r.of ? " of " + r.of : "")))].join(", ");
+}
+
+/* ---------- ZIL syntax highlighting with cross-links ---------- */
+function highlight(src) {
+  let out = "", i = 0, n = src.length;
+  const nameLink = word => {
+    const k = kindOf(word);
+    if (k && word.length > 1)
+      return `<a class="xr ${k}" onclick="go('${k}','${word}')">${esc(word)}</a>`;
+    return esc(word);
+  };
+  while (i < n) {
+    const c = src[i];
+    if (c === '"') {                                   // string
+      let j = i + 1;
+      while (j < n && !(src[j] === '"' && src[j-1] !== "\\")) j++;
+      out += `<span class="s">${esc(src.slice(i, j + 1))}</span>`;
+      i = j + 1;
+    } else if (c === ";" && src[i+1] === '"') {        // string comment
+      let j = i + 2;
+      while (j < n && !(src[j] === '"' && src[j-1] !== "\\")) j++;
+      out += `<span class="c">${esc(src.slice(i, j + 1))}</span>`;
+      i = j + 1;
+    } else if (c === "," || c === "." ) {              // global / local ref
+      const m = /^[A-Z0-9?\-!\.=#$&*']+/i.exec(src.slice(i + 1));
+      if (m) {
+        const word = m[0];
+        out += esc(c) + (c === "," ? `<span class="g">${nameLink(word)}</span>`
+                                   : esc(word));
+        i += 1 + word.length;
+      } else { out += esc(c); i++; }
+    } else if (/[A-Z0-9]/i.test(c)) {                  // bare atom
+      const m = /^[A-Z0-9?\-!\.=#$&*']+/i.exec(src.slice(i));
+      const word = m[0];
+      const prev = src[i - 1];
+      if (prev === "<")
+        out += `<span class="k">${nameLink(word)}</span>`;
+      else
+        out += nameLink(word);
+      i += word.length;
+    } else { out += esc(c); i++; }
+  }
+  return out;
+}
+function srcBlock(ent) {
+  return `<h3>Source <span style="text-transform:none;letter-spacing:0">
+    — ${esc(ent.file)}:${ent.line}</span></h3>
+    <pre class="src">${highlight(ent.source)}</pre>`;
+}
+
+/* ------------------------------ sidebar ------------------------------ */
+function matches(ent, q) {
+  if (!q) return true;
+  q = q.toUpperCase();
+  return ent.name.toUpperCase().includes(q)
+    || (ent.desc || "").toUpperCase().includes(q)
+    || (ent.source || "").toUpperCase().includes(q)
+    || (ent.value || "").toUpperCase().includes(q);
+}
+function sidebarItems() {
+  const dict = { rooms: W.rooms, objects: W.objects,
+                 routines: W.routines, globals: W.globals,
+                 syntax: W.syntax, vocab: W.vocab }[tab];
+  if (!dict) return [];
+  return Object.values(dict).filter(e => matches(e, query));
+}
+function groupKey(e) {
+  if (tab === "syntax" || tab === "vocab") {
+    const c = (e.name || "?")[0].toUpperCase();
+    return /[A-Z]/.test(c) ? c : "#";
+  }
+  return REGION(e.file);
+}
+function renderSidebar() {
+  const items = sidebarItems();
+  if (tab === "syntax" || tab === "vocab")
+    items.sort((a, b) => a.name.localeCompare(b.name));
+  const groups = {};
+  for (const e of items) (groups[groupKey(e)] ||= []).push(e);
+  let html = "";
+  for (const g of Object.keys(groups)) {
+    html += `<div class="grp">${esc(g)} (${groups[g].length})</div>`;
+    for (const e of groups[g]) {
+      const sub = e.desc ? `<small>${esc(e.desc)}</small>` : "";
+      html += `<div class="item ${e.name === selected ? "sel" : ""}"
+        onclick="select('${e.name}')">${esc(e.name)}${sub}</div>`;
+    }
+  }
+  $("#sidebar").innerHTML = html || `<div class="grp">no matches</div>`;
+}
+window.select = name => { selected = name; render(); };
+
+/* ------------------------------ detail ------------------------------ */
+function flagTags(flags) {
+  return flags.length
+    ? flags.map(f => `<span class="tag">${esc(f)}</span>`).join("")
+    : `<span class="empty">none</span>`;
+}
+function contentsList(ent) {
+  if (!ent.contents.length) return `<span class="empty">nothing here</span>`;
+  return ent.contents.map(c => {
+    const o = W.objects[c];
+    return `${link(c)} <span class="msg">${esc(o && o.desc || "")}</span>`;
+  }).join("<br>");
+}
+function refsBlock(ent) {
+  if (!ent.referencedBy || !ent.referencedBy.length) return "";
+  return `<h3>Referenced by ${ent.referencedBy.length} routines</h3>
+    <div class="refs">${ent.referencedBy.map(r => link(r)).join(" ")}</div>`;
+}
+
+function renderRoom(r) {
+  let html = `<h2>${esc(r.desc || r.name)}</h2>
+    <div class="meta">${esc(r.name)} · ${esc(REGION(r.file))} ·
+      ${esc(r.file)}:${r.line}</div>`;
+  if (r.ldesc) html += `<div class="desc-quote">${esc(r.ldesc)}</div>`;
+  html += `<h3>Exits</h3>`;
+  if (r.exits.length) {
+    html += `<table class="exits"><tr><th>Dir</th><th>Leads to</th><th>Condition / behavior</th></tr>`;
+    for (const ex of r.exits) {
+      let dest = ex.to ? link(ex.to, "room") : "—";
+      let cond = "";
+      if (ex.kind === "conditional") {
+        cond = `<span class="cond">if ${esc(ex.condition)}</span>`;
+        if (ex.else) cond += ` <span class="msg">else ${esc(ex.else)}</span>`;
+      } else if (ex.kind === "routine") {
+        dest = `via ${link(ex.per, "routine")}`;
+      } else if (ex.kind === "blocked") {
+        dest = "✗";
+        cond = `<span class="msg">"${esc(ex.message)}"</span>`;
+      }
+      html += `<tr><td><b>${ex.dir}</b></td><td>${dest}</td><td>${cond}</td></tr>`;
+    }
+    html += `</table>`;
+  } else html += `<span class="empty">no exits (or handled by action routine)</span>`;
+
+  html += `<div class="cols"><div><h3>Objects here</h3>${contentsList(r)}</div>`;
+  if (r.globals.length)
+    html += `<div><h3>Scenery (local-globals)</h3>${r.globals.map(g => link(g)).join("<br>")}</div>`;
+  html += `<div><h3>Flags</h3>${flagTags(r.flags)}</div></div>`;
+
+  if (r.pseudo.length)
+    html += `<h3>Pseudo objects</h3>${r.pseudo.map(esc).join(", ")}`;
+  if (r.action)
+    html += `<h3>Action routine</h3>${routineInline(r.action)}`;
+  html += srcBlock(r) + refsBlock(r);
+  return html;
+}
+
+function routineInline(name) {
+  const rt = W.routines[name];
+  if (!rt) return `<span class="empty">${esc(name)} (not found)</span>`;
+  return `<div class="meta">${link(name)} — ${esc(rt.file)}:${rt.line}</div>
+    <pre class="src">${highlight(rt.source)}</pre>`;
+}
+
+function renderObject(o) {
+  let html = `<h2>${esc(o.desc || o.name)}</h2>
+    <div class="meta">${esc(o.name)} · ${esc(REGION(o.file))} ·
+      ${esc(o.file)}:${o.line}</div>`;
+  if (o.fdesc) html += `<div class="desc-quote">${esc(o.fdesc)}</div>`;
+  if (o.ldesc) html += `<div class="desc-quote">${esc(o.ldesc)}</div>`;
+  html += `<div class="cols">`;
+  html += `<div><h3>Location</h3>${o.loc ? link(o.loc) : '<span class="empty">nowhere</span>'}</div>`;
+  if (o.synonyms.length)
+    html += `<div><h3>Synonyms</h3>${o.synonyms.map(s => `<span class="tag">${esc(s)}</span>`).join("")}</div>`;
+  if (o.adjectives.length)
+    html += `<div><h3>Adjectives</h3>${o.adjectives.map(s => `<span class="tag">${esc(s)}</span>`).join("")}</div>`;
+  html += `<div><h3>Flags</h3>${flagTags(o.flags)}</div></div>`;
+  if (o.contents.length)
+    html += `<h3>Contains</h3>${contentsList(o)}`;
+  const other = Object.entries(o.otherProps || {});
+  if (other.length)
+    html += `<h3>Other properties</h3>` + other.map(([k, v]) =>
+      `<div><span class="tag">${esc(k)}</span> ${v.map(x => link(x)).join(" ")}</div>`).join("");
+  if (o.action) html += `<h3>Action routine</h3>${routineInline(o.action)}`;
+  if (o.descfcn) html += `<h3>Description routine</h3>${routineInline(o.descfcn)}`;
+  html += srcBlock(o) + refsBlock(o);
+  return html;
+}
+
+function renderRoutine(rt) {
+  // find rooms/objects that use this routine
+  const users = [];
+  for (const dict of [W.rooms, W.objects])
+    for (const e of Object.values(dict)) {
+      if (e.action === rt.name || e.descfcn === rt.name || e.contfcn === rt.name)
+        users.push(e.name);
+      if (e.exits) for (const ex of e.exits)
+        if (ex.per === rt.name) users.push(e.name);
+    }
+  let html = `<h2>${esc(rt.name)}</h2>
+    <div class="meta">routine · ${esc(rt.file)}:${rt.line}–${rt.endLine}</div>`;
+  if (users.length)
+    html += `<h3>Used by</h3><div class="refs">${[...new Set(users)].map(u => link(u)).join(" ")}</div>`;
+  html += `<h3>Source</h3><pre class="src">${highlight(rt.source)}</pre>`;
+  return html;
+}
+
+function renderGlobal(g) {
+  return `<h2>${esc(g.name)}</h2>
+    <div class="meta">${esc(g.kind || "global")} · ${esc(g.file)}:${g.line}</div>
+    <h3>${g.kind === "constant" ? "Value" : "Initial value"}</h3>
+    <pre class="src">${highlight(g.value || "<>")}</pre>`;
+}
+
+function renderVerb(v) {
+  let html = `<h2>${esc(v.verb)}</h2>
+    <div class="meta">verb · ${v.productions.length} grammar pattern${
+      v.productions.length === 1 ? "" : "s"} · syntax.zil</div>`;
+  if (v.synonyms.length)
+    html += `<h3>Verb synonyms</h3>` +
+      v.synonyms.map(s => `<span class="tag">${esc(s)}</span>`).join("");
+  html += `<h3>Grammar</h3>
+    <table class="exits"><tr><th>Pattern</th><th>Action</th><th>Pre-action</th><th>Line</th></tr>`;
+  for (const p of v.productions) {
+    const pat = esc(p.pattern).replace(/\bOBJECT\b/g, "<b>OBJECT</b>");
+    html += `<tr><td class="cond">${pat}</td>
+      <td>${p.action ? link(p.action) : "—"}</td>
+      <td>${p.preaction ? link(p.preaction) : "—"}</td>
+      <td class="msg">${esc(p.file)}:${p.line}</td></tr>`;
+  }
+  html += `</table>`;
+  const wordEnt = W.vocab && W.vocab[v.verb];
+  if (wordEnt && wordEnt.roles.length > 1)
+    html += `<h3>Other roles of this word</h3>
+      <a class="xr" onclick="go('word','${v.verb}')">see vocabulary entry</a>`;
+  return html;
+}
+
+function renderWord(w) {
+  const KIND_TAB = { verb: "verb", "verb-synonym": "verb", noun: "object",
+                     adjective: "object" };
+  let html = `<h2>${esc(w.word)}</h2>
+    <div class="meta">vocabulary word · ${w.roles.length} role${
+      w.roles.length === 1 ? "" : "s"}</div><h3>Roles</h3>
+    <table class="exits"><tr><th>Role</th><th>Of</th></tr>`;
+  for (const r of w.roles) {
+    let of = "—";
+    if (r.of) {
+      const k = KIND_TAB[r.kind];
+      of = k === "verb" ? `<a class="xr" onclick="go('verb','${r.of}')">${esc(r.of)}</a>`
+         : k === "object" ? link(r.of)
+         : W.syntax && W.syntax[r.of]
+           ? `<a class="xr" onclick="go('verb','${r.of}')">${esc(r.of)}</a>`
+           : esc(r.of);
+    } else if (r.kind === "verb" && W.syntax && W.syntax[w.word]) {
+      of = `<a class="xr" onclick="go('verb','${w.word}')">grammar patterns</a>`;
+    }
+    html += `<tr><td><span class="tag">${esc(r.kind)}</span></td><td>${of}</td></tr>`;
+  }
+  return html + `</table>`;
+}
+
+function renderDetail() {
+  const d = $("#detail");
+  if ((tab === "syntax" || tab === "vocab") && !W.syntax) {
+    d.innerHTML = `<h2>Vocabulary data missing</h2>
+      <p>This world.js predates the Syntax/Vocab tabs. Regenerate it:</p>
+      <pre class="src">python3 tools/build_viewer.py</pre>
+      <p>then reload this page.</p>`;
+    return;
+  }
+  if (tab === "syntax" && W.syntax && W.syntax[selected]) {
+    d.innerHTML = renderVerb(W.syntax[selected]);
+    return;
+  }
+  if (tab === "vocab" && W.vocab && W.vocab[selected]) {
+    d.innerHTML = renderWord(W.vocab[selected]);
+    return;
+  }
+  const ent = selected && (W.rooms[selected] || W.objects[selected]
+    || W.routines[selected] || W.globals[selected]
+    || (W.syntax || {})[selected] || (W.vocab || {})[selected]);
+  if (ent && W.syntax && W.syntax[selected] === ent) { d.innerHTML = renderVerb(ent); return; }
+  if (ent && W.vocab && W.vocab[selected] === ent) { d.innerHTML = renderWord(ent); return; }
+  if (!ent) {
+    d.innerHTML = `<h2>LGOP World Browser</h2>
+      <p class="meta">${Object.keys(W.rooms).length} rooms ·
+        ${Object.keys(W.objects).length} objects ·
+        ${Object.keys(W.routines).length} routines ·
+        ${Object.keys(W.globals).length} globals</p>
+      <p>Pick something from the sidebar, use the <b>Map</b> tab to browse the
+      world graph, or search above. All names in source listings are
+      clickable cross-references.</p>`;
+    return;
+  }
+  if (W.rooms[selected]) d.innerHTML = renderRoom(ent);
+  else if (W.objects[selected]) d.innerHTML = renderObject(ent);
+  else if (W.routines[selected]) d.innerHTML = renderRoutine(ent);
+  else d.innerHTML = renderGlobal(ent);
+}
+
+/* ------------------------------- map -------------------------------- */
+let mapBuilt = false, mapRegions = null;
+function buildMap() {
+  const rooms = Object.values(W.rooms).filter(r => REGION_COLOR[REGION(r.file)]);
+  if (!mapRegions) {
+    mapRegions = {};
+    for (const r of rooms) mapRegions[REGION(r.file)] = true;
+  }
+  const active = rooms.filter(r => mapRegions[REGION(r.file)]);
+  const idx = {}; active.forEach((r, i) => idx[r.name] = i);
+  const nodes = active.map(r => ({ r, x: Math.random() * 1000, y: Math.random() * 700, vx: 0, vy: 0 }));
+  const edges = [];
+  for (const r of active) for (const ex of r.exits)
+    if (ex.to && idx[ex.to] !== undefined && idx[ex.to] !== idx[r.name])
+      edges.push({ a: idx[r.name], b: idx[ex.to], cond: ex.kind === "conditional" });
+  // dedupe
+  const seen = new Set(), E = [];
+  for (const e of edges) {
+    const k = Math.min(e.a, e.b) + ":" + Math.max(e.a, e.b);
+    if (!seen.has(k)) { seen.add(k); E.push(e); }
+  }
+  // cluster start positions per region
+  const regs = [...new Set(active.map(r => REGION(r.file)))];
+  const centers = {};
+  regs.forEach((g, i) => {
+    const a = i / regs.length * 2 * Math.PI;
+    centers[g] = [500 + 330 * Math.cos(a), 380 + 240 * Math.sin(a)];
+  });
+  nodes.forEach(nd => {
+    const c = centers[REGION(nd.r.file)];
+    nd.x = c[0] + (Math.random() - .5) * 220;
+    nd.y = c[1] + (Math.random() - .5) * 180;
+  });
+  // force simulation
+  for (let iter = 0; iter < 260; iter++) {
+    const t = 1 - iter / 260;
+    for (let i = 0; i < nodes.length; i++)
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy + 0.01, d = Math.sqrt(d2);
+        const rep = 2600 / d2;
+        dx /= d; dy /= d;
+        a.vx += dx * rep; a.vy += dy * rep;
+        b.vx -= dx * rep; b.vy -= dy * rep;
+      }
+    for (const e of E) {
+      const a = nodes[e.a], b = nodes[e.b];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+      const f = (d - 90) * 0.02;
+      dx /= d; dy /= d;
+      a.vx += dx * f * d * .02; a.vy += dy * f * d * .02;
+      b.vx -= dx * f * d * .02; b.vy -= dy * f * d * .02;
+    }
+    for (const nd of nodes) {
+      const c = centers[REGION(nd.r.file)];
+      nd.vx += (c[0] - nd.x) * 0.004; nd.vy += (c[1] - nd.y) * 0.004;
+      nd.x += nd.vx * t; nd.y += nd.vy * t;
+      nd.vx *= .5; nd.vy *= .5;
+    }
+  }
+  // render svg
+  const svg = $("#map");
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+  for (const nd of nodes) {
+    minX = Math.min(minX, nd.x); maxX = Math.max(maxX, nd.x);
+    minY = Math.min(minY, nd.y); maxY = Math.max(maxY, nd.y);
+  }
+  svg.setAttribute("viewBox", `${minX - 80} ${minY - 60} ${maxX - minX + 160} ${maxY - minY + 120}`);
+  let s = "";
+  for (const e of E) {
+    const a = nodes[e.a], b = nodes[e.b];
+    s += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"
+          class="${e.cond ? "cond" : ""}"/>`;
+  }
+  for (const nd of nodes) {
+    const col = REGION_COLOR[REGION(nd.r.file)] || "#888";
+    s += `<circle cx="${nd.x}" cy="${nd.y}" r="7" fill="${col}"
+          onclick="go('room','${nd.r.name}')">
+          <title>${esc(nd.r.desc || nd.r.name)}</title></circle>
+          <text x="${nd.x + 9}" y="${nd.y + 3}">${esc(nd.r.desc || nd.r.name)}</text>`;
+  }
+  svg.innerHTML = s;
+  // legend
+  $("#maplegend").innerHTML = "<b>Regions</b><br>" + Object.keys(mapRegions).map(g =>
+    `<label><input type="checkbox" ${mapRegions[g] ? "checked" : ""}
+       onchange="toggleRegion('${g}')">
+       <span style="color:${REGION_COLOR[g]}">●</span> ${g}</label>`).join("")
+    + `<div style="margin-top:6px;color:var(--dim)">— exit &nbsp; ┄ conditional</div>`;
+  mapBuilt = true;
+}
+window.toggleRegion = g => { mapRegions[g] = !mapRegions[g]; buildMap(); };
+
+// pan & zoom
+(() => {
+  const svg = $("#map");
+  let drag = null;
+  svg.addEventListener("mousedown", e => {
+    drag = { x: e.clientX, y: e.clientY, vb: svg.getAttribute("viewBox").split(" ").map(Number) };
+  });
+  window.addEventListener("mousemove", e => {
+    if (!drag) return;
+    const vb = drag.vb, scale = vb[2] / svg.clientWidth;
+    svg.setAttribute("viewBox", `${vb[0] - (e.clientX - drag.x) * scale}
+      ${vb[1] - (e.clientY - drag.y) * scale} ${vb[2]} ${vb[3]}`);
+  });
+  window.addEventListener("mouseup", () => drag = null);
+  svg.addEventListener("wheel", e => {
+    e.preventDefault();
+    const vb = svg.getAttribute("viewBox").split(/\s+/).map(Number);
+    const f = e.deltaY > 0 ? 1.15 : 0.87;
+    const mx = vb[0] + vb[2] * e.offsetX / svg.clientWidth;
+    const my = vb[1] + vb[3] * e.offsetY / svg.clientHeight;
+    svg.setAttribute("viewBox",
+      `${mx - (mx - vb[0]) * f} ${my - (my - vb[1]) * f} ${vb[2] * f} ${vb[3] * f}`);
+  }, { passive: false });
+})();
+
+/* ------------------------------- play ------------------------------- */
+let playId = null, playBusy = false, playRoom = null;
+
+// room DESC text -> room name(s), for spotting the current room in output
+const DESC_INDEX = {};
+for (const [name, r] of Object.entries(W.rooms)) {
+  const d = (r.desc || "").trim();
+  if (d) (DESC_INDEX[d] ||= []).push(name);
+}
+
+function detectRoom(text) {
+  if (!text) return;
+  let found = null;
+  for (let line of text.split("\n")) {
+    line = line.trim();
+    // room title lines may carry a suffix, e.g. "Canal, in the barge"
+    const base = line.includes(",") ? line.slice(0, line.indexOf(",")) : line;
+    const cands = DESC_INDEX[line] || DESC_INDEX[base];
+    if (!cands) continue;
+    let pick = cands[0];
+    if (cands.length > 1 && playRoom && W.rooms[playRoom]) {
+      const dests = new Set(W.rooms[playRoom].exits.map(e => e.to));
+      pick = cands.find(c => c === playRoom || dests.has(c)) || pick;
+    }
+    found = pick;                       // keep the last title in this batch
+  }
+  if (!found) return;
+  playRoom = found;
+  selected = found;                     // Rooms tab opens on this room
+  $("#playloc").innerHTML =
+    `<a class="xr room" onclick="go('room','${found}')">&#128205; ${esc(W.rooms[found].desc)}</a>`;
+}
+
+function termAppend(text, cls) {
+  if (!text) return;
+  const term = $("#term");
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = text;
+  term.appendChild(span);
+  term.scrollTop = term.scrollHeight;
+}
+function stripPrompt(s) { return (s || "").replace(/\n?\s*>\s*$/, "\n"); }
+
+async function playApi(path, body) {
+  const res = await fetch(path, { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}) });
+  return res.json();
+}
+
+async function playStart(restart) {
+  if (playId && !restart) return;
+  $("#term").textContent = "";
+  $("#playloc").textContent = "";
+  playRoom = null;
+  termAppend("[starting game…]\n\n", "echo");
+  playBusy = true;
+  try {
+    const r = await playApi("api/new", { id: playId });
+    if (r.error) { termAppend(r.error + "\n", "err"); playId = null; return; }
+    playId = r.id;
+    termAppend(stripPrompt(r.output));
+    detectRoom(r.output);
+    if (r.dead) termAppend("\n[the interpreter exited]\n", "err");
+  } catch (e) {
+    termAppend("Backend not reachable. Start it with:\n\n" +
+      "    python3 tools/server.py --port 8083\n\n" +
+      "(the plain http.server has no game API)\n", "err");
+    playId = null;
+  } finally {
+    playBusy = false;
+    $("#cmd").focus();
+  }
+}
+
+async function playSend() {
+  const inp = $("#cmd");
+  const cmd = inp.value;
+  if (playBusy || !playId) return;
+  inp.value = "";
+  termAppend("> " + cmd + "\n", "echo");
+  playBusy = true;
+  try {
+    const r = await playApi("api/send", { id: playId, cmd });
+    if (r.error) { termAppend(r.error + "\n", "err"); if (r.dead) playId = null; return; }
+    termAppend(stripPrompt(r.output));
+    detectRoom(r.output);
+    if (r.dead) {
+      termAppend("\n[game over — press Restart to play again]\n", "err");
+      playId = null;
+    }
+  } catch (e) {
+    termAppend("[lost connection to backend]\n", "err");
+  } finally {
+    playBusy = false;
+    inp.focus();
+  }
+}
+$("#cmd").addEventListener("keydown", e => { if (e.key === "Enter") playSend(); });
+$("#restart").addEventListener("click", () => playStart(true));
+
+/* ------------------------------ wiring ------------------------------ */
+function render() {
+  document.querySelectorAll("nav button").forEach(b =>
+    b.classList.toggle("on", b.dataset.tab === tab));
+  const isMap = tab === "map", isPlay = tab === "play";
+  $("#sidebar").style.display = (isMap || isPlay) ? "none" : "";
+  $("#detail").style.display = (isMap || isPlay) ? "none" : "";
+  $("#mapwrap").style.display = isMap ? "block" : "none";
+  $("#playwrap").style.display = isPlay ? "flex" : "none";
+  if (isMap) { buildMap(); return; }
+  if (isPlay) { playStart(false); return; }
+  renderSidebar();
+  renderDetail();
+  const sel = document.querySelector("#sidebar .item.sel");
+  if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+document.querySelectorAll("nav button").forEach(b =>
+  b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
+$("#search").addEventListener("input", e => { query = e.target.value; renderSidebar(); });
+$("#stats").textContent = `${Object.keys(W.rooms).length} rooms · `
+  + `${Object.keys(W.objects).length} objects · ${Object.keys(W.routines).length} routines`;
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# runtime artifacts from tools/server.py & start.sh
+saves/
+server.log
+server.pid
+__pycache__/
+*.pyc
