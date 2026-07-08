@@ -19,13 +19,22 @@ world explorer and a game server. See ROADMAP.md for where this is headed.
 
 ## Layout
 
-| Path | What it is |
+Games live under `infocom/<game>/`; LGOP is `infocom/leathergoddesses-gold/`.
+Each game folder holds its ZIL source, compiler intermediates, story file,
+generated `world.js`, and a `game.json` ({"name", "story"}). The viewer and
+server are game-agnostic; the page has a game picker (no per-game index
+files).
+
+| Path (inside `infocom/leathergoddesses-gold/`) | What it is |
 |---|---|
 | `*.zil` | Game source. `x1.zil` is the main file (`INSERT-FILE` order + `<DIRECTIONS ...>`). Regions: earth, mars, venus, cleveland, spaceship, phobos. Engine: parser, syntax, verbs, globals, misc. `hints.zil` = Solid Gold in-game InvisiClues. |
 | `*.zap` | **Original Infocom ZILCH compiler intermediates** (came with the 2019 historicalsource archive import, i.e. off the Infocom drive): `x1dat.zap` object/property/vocab tables, `x1str.zap` string pool, `x1freq.zap` abbreviations, `x1pur.zap` pure data. The top-level `x1.zap` (routine code) is absent. NOT ZILF output. |
-| `COMPILED/x1.z5` | Z-machine v5 story file (`<VERSION XZIP>`) — **the official Solid Gold release: Release 4 / Serial 880405** (verified in-game via VERSION, 2026-07). Came off the Infocom drive with the 2019 historicalsource import (their commit renamed Infocom's `x1.zip` extension). Same byte size as top-level `x1.zip`. An authentic ZILCH build = first-class differential-testing oracle. No modern from-source build has ever been verified. |
-| `tools/build_viewer.py` | Parses all ZIL into `viewer/world.js` (rooms, objects, exits, routines with source text, globals, containment, reverse references). Rerun after editing `.zil` files. |
-| `tools/server.py` | THE server (stdlib only): serves `viewer/` + JSON API (`/api/new`, `/api/send`, `/api/health`) that runs the game through `dfrotz` subprocesses, one per browser session. Saves land in `saves/`. |
+| `COMPILED/x1.z5` | Z-machine v5 story file (`<VERSION XZIP>`) — **the official Solid Gold release: Release 4 / Serial 880405** (verified in-game via VERSION, 2026-07). Came off the Infocom drive with the 2019 historicalsource import (their commit renamed Infocom's `x1.zip` extension). Same byte size as sibling `x1.zip`. An authentic ZILCH build = first-class differential-testing oracle. No modern from-source build has ever been verified. |
+
+| Path (repo root) | What it is |
+|---|---|
+| `tools/build_viewer.py` | Parses a game's ZIL into `<game-dir>/world.js` (rooms, objects, exits, routines with source text, globals, grammar, vocabulary). `python3 tools/build_viewer.py [game-dir]`; rerun after editing `.zil` files. |
+| `tools/server.py` | THE server (stdlib only): serves the repo root (/ → viewer/index.html) + JSON API (`/api/games`, `/api/new`, `/api/send`, `/api/health`) running games through `dfrotz` subprocesses, one per browser session. Discovers games by scanning `infocom/*/world.js`. Saves land in `saves/<game>/`. |
 | `tools/start.sh` | Wrapper: checks dfrotz, rebuilds the .z5 via `zilf`/`zapf` if missing, starts the server. `--background` daemonizes (server.pid/server.log). |
 | `viewer/index.html` | Self-contained GUI: Map (force graph), Rooms/Objects/Routines/Globals browsers with cross-linked syntax-highlighted source, Syntax tab (verb grammar from SYNTAX/VERB-SYNONYM forms), Vocab tab (every dictionary word with its roles), Play tab (terminal to the backend). Tracks the current room by matching transcript lines against room DESCs. |
 

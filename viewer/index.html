@@ -18,6 +18,9 @@
   header { padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
            display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
   header h1 { font-size: 15px; margin: 0; color: var(--accent); white-space: nowrap; }
+  #gamepick { background: var(--panel2); color: var(--accent); font-weight: 600;
+              border: 1px solid var(--border); border-radius: 6px;
+              padding: 5px 8px; font-size: 13px; max-width: 280px; }
   nav button { background: none; border: none; color: var(--dim); font: inherit;
                padding: 6px 10px; cursor: pointer; border-radius: 5px; }
   nav button.on { color: var(--fg); background: var(--panel2); }
@@ -36,7 +39,12 @@
   #sidebar .item.sel { background: var(--panel2); color: var(--accent); }
   #sidebar .item small { color: var(--dim); margin-left: 6px; }
   #detail { flex: 1; overflow-y: auto; padding: 20px 28px; min-width: 0; }
-  #mapwrap { flex: 1; position: relative; display: none; }
+  #mapwrap { flex: 1; position: relative; display: none; user-select: none; }
+  #mapdebug { user-select: text; }
+  #mapdebugtoggle { position: absolute; top: 10px; right: 10px; font-size: 12px;
+                    color: var(--dim); background: rgba(29,31,38,.92);
+                    border: 1px solid var(--border); border-radius: 8px;
+                    padding: 6px 10px; cursor: pointer; }
   #map { width: 100%; height: 100%; cursor: grab; }
   #maplegend { position: absolute; top: 10px; left: 10px; background: rgba(29,31,38,.92);
                border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
@@ -86,6 +94,11 @@
             line-height: 1.45; pointer-events: none; }
   #maptip b { color: var(--accent); }
   #maptip .rgn { color: var(--dim); }
+  #mapdebug { position: absolute; bottom: 8px; left: 8px; max-width: 46%;
+              max-height: 40%; overflow-y: auto; margin: 0; padding: 8px 10px;
+              background: rgba(29,31,38,.92); border: 1px solid var(--border);
+              border-radius: 8px; font: 11px/1.5 ui-monospace, monospace;
+              color: var(--dim); white-space: pre-wrap; }
   .refs a { margin-right: 10px; }
   #playwrap { flex: 1; display: none; flex-direction: column; min-width: 0; }
   #term { flex: 1; overflow-y: auto; padding: 18px 24px;
@@ -109,7 +122,7 @@
 </head>
 <body>
 <header>
-  <h1>Leather Goddesses of Phobos</h1>
+  <select id="gamepick" title="Choose a game"></select>
   <nav>
     <button data-tab="map">Map</button>
     <button data-tab="rooms" class="on">Rooms</button>
@@ -130,6 +143,9 @@
     <svg id="map"></svg>
     <div id="maplegend"></div>
     <div id="maptip"></div>
+    <pre id="mapdebug" style="display:none"></pre>
+    <label id="mapdebugtoggle"><input type="checkbox"
+      onchange="document.getElementById('mapdebug').style.display = this.checked ? '' : 'none'"> debug</label>
   </div>
   <div id="playwrap">
     <div id="term"></div>
@@ -142,16 +158,25 @@
     </div>
   </div>
 </main>
-<script src="world.js"></script>
 <script>
-const W = window.WORLD;
+let W = null;                 // set by initWorld() once world.js loads
 const REGION = f => ({ "earth.zil": "Earth", "mars.zil": "Mars", "venus.zil": "Venus",
   "cleveland.zil": "Cleveland", "spaceship.zil": "Spaceship", "phobos.zil": "Phobos",
   "misc.zil": "Misc", "globals.zil": "Global scenery", "verbs.zil": "Verbs",
   "parser.zil": "Parser", "hints.zil": "Hints", "syntax.zil": "Syntax",
-  "x1.zil": "Main" }[f] || f);
+  "x1.zil": "Main" }[f] || String(f).replace(/\.zil$/i, ""));
 const REGION_COLOR = { Earth: "#98c379", Mars: "#e06c75", Venus: "#c678dd",
   Cleveland: "#61afef", Spaceship: "#56b6c2", Phobos: "#e8a33d", Misc: "#8b8e99" };
+// games without a hand-tuned mapping get palette colors as regions appear
+const PALETTE = ["#98c379", "#e06c75", "#c678dd", "#61afef", "#56b6c2",
+                 "#e8a33d", "#d19a66", "#7bc275", "#ef8790", "#8b8e99"];
+const _regionColors = {};
+function regionColor(g) {
+  if (REGION_COLOR[g]) return REGION_COLOR[g];
+  if (!_regionColors[g])
+    _regionColors[g] = PALETTE[Object.keys(_regionColors).length % PALETTE.length];
+  return _regionColors[g];
+}
 
 let tab = "rooms", selected = null, query = "";
 
@@ -180,16 +205,18 @@ window.go = (k, name) => {
 };
 
 // decorate syntax/vocab entries for the sidebar (name/desc/file fields)
-for (const v of Object.values(W.syntax || {})) {
-  v.name = v.verb;
-  v.file = "syntax.zil";
-  v.desc = `${v.productions.length} pattern${v.productions.length === 1 ? "" : "s"}`
-    + (v.synonyms.length ? " · " + v.synonyms.join(" ") : "");
-}
-for (const w of Object.values(W.vocab || {})) {
-  w.name = w.word;
-  w.file = "syntax.zil";
-  w.desc = [...new Set(w.roles.map(r => r.kind + (r.of ? " of " + r.of : "")))].join(", ");
+function decorateEntries() {
+  for (const v of Object.values(W.syntax || {})) {
+    v.name = v.verb;
+    v.file = (v.productions[0] && v.productions[0].file) || "syntax.zil";
+    v.desc = `${v.productions.length} pattern${v.productions.length === 1 ? "" : "s"}`
+      + (v.synonyms.length ? " · " + v.synonyms.join(" ") : "");
+  }
+  for (const w of Object.values(W.vocab || {})) {
+    w.name = w.word;
+    w.file = "syntax.zil";
+    w.desc = [...new Set(w.roles.map(r => r.kind + (r.of ? " of " + r.of : "")))].join(", ");
+  }
 }
 
 /* ---------- ZIL syntax highlighting with cross-links ---------- */
@@ -485,6 +512,11 @@ function renderDetail() {
 
 /* ------------------------------- map -------------------------------- */
 let mapBuilt = false, mapRegions = null, mapCache = null;
+function mapDebug(msg) {
+  const el = $("#mapdebug");
+  el.textContent += msg + "\n";
+  el.scrollTop = el.scrollHeight;
+}
 function layoutMap(active) {
   const idx = {}; active.forEach((r, i) => idx[r.name] = i);
   const nodes = active.map(r => ({ r, x: 0, y: 0, vx: 0, vy: 0 }));
@@ -510,6 +542,8 @@ function layoutMap(active) {
     nd.x = c[0] + (Math.random() - .5) * 220;
     nd.y = c[1] + (Math.random() - .5) * 180;
   });
+  mapDebug(`layout: ${active.length} rooms, ${E.length} edges, `
+    + `${regs.length} cluster${regs.length === 1 ? "" : "s"} (${regs.join(", ")})`);
   // force simulation
   for (let iter = 0; iter < 260; iter++) {
     const t = 1 - iter / 260;
@@ -529,8 +563,8 @@ function layoutMap(active) {
       const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
       const f = (d - 90) * 0.02;
       dx /= d; dy /= d;
-      a.vx += dx * f * d * .02; a.vy += dy * f * d * .02;
-      b.vx -= dx * f * d * .02; b.vy -= dy * f * d * .02;
+      a.vx += dx * f; a.vy += dy * f;
+      b.vx -= dx * f; b.vy -= dy * f;
     }
     for (const nd of nodes) {
       const c = centers[REGION(nd.r.file)];
@@ -538,20 +572,35 @@ function layoutMap(active) {
       nd.x += nd.vx * t; nd.y += nd.vy * t;
       nd.vx *= .5; nd.vy *= .5;
     }
+    if (iter % 20 === 0 || iter === 259) {
+      let maxc = 0, bad = 0;
+      for (const nd of nodes) {
+        if (isFinite(nd.x) && isFinite(nd.y))
+          maxc = Math.max(maxc, Math.abs(nd.x), Math.abs(nd.y));
+        else bad++;
+      }
+      mapDebug(`iter ${String(iter).padStart(3)}: max|coord| ${Math.round(maxc)}`
+        + (bad ? `  NON-FINITE: ${bad} nodes` : ""));
+    }
   }
   return { nodes, E };
 }
 
 function buildMap() {
-  const rooms = Object.values(W.rooms).filter(r => REGION_COLOR[REGION(r.file)]);
+  const rooms = Object.values(W.rooms);
   if (!mapRegions) {
     mapRegions = {};
     for (const r of rooms) mapRegions[REGION(r.file)] = true;
   }
   const active = rooms.filter(r => mapRegions[REGION(r.file)]);
   const key = active.map(r => r.name).join(",");
-  if (!mapCache || mapCache.key !== key)      // layout once; reuse across visits
+  $("#mapdebug").textContent = "";
+  if (!mapCache || mapCache.key !== key) {    // layout once; reuse across visits
+    mapDebug("building fresh layout");
     mapCache = { key, ...layoutMap(active) };
+  } else {
+    mapDebug("using cached layout");
+  }
   const { nodes, E } = mapCache;
   const byName = {};
   nodes.forEach(nd => byName[nd.r.name] = nd);
@@ -570,8 +619,10 @@ function buildMap() {
   if (cur) {
     const w = Math.max(fullW * 0.35, 320), h = Math.max(fullH * 0.35, 240);
     svg.setAttribute("viewBox", `${cur.x - w / 2} ${cur.y - h / 2} ${w} ${h}`);
+    mapDebug(`view: zoomed on ${cur.r.name} [${svg.getAttribute("viewBox")}]`);
   } else {
     svg.setAttribute("viewBox", svg.dataset.fullView);
+    mapDebug(`view: full [${svg.getAttribute("viewBox")}]`);
   }
   let s = "";
   for (const e of E) {
@@ -586,7 +637,7 @@ function buildMap() {
     s += `<polyline class="trail" points="${trailPts.join(" ")}"/>`;
   const dimOthers = visitedRooms.size > 0;
   for (const nd of nodes) {
-    const col = REGION_COLOR[REGION(nd.r.file)] || "#888";
+    const col = regionColor(REGION(nd.r.file));
     const here = nd.r.name === playRoom;
     const cls = here ? "cur" : visitedRooms.has(nd.r.name) ? "visited"
               : dimOthers ? "unvisited" : "";
@@ -601,7 +652,7 @@ function buildMap() {
   $("#maplegend").innerHTML = "<b>Regions</b><br>" + Object.keys(mapRegions).map(g =>
     `<label><input type="checkbox" ${mapRegions[g] ? "checked" : ""}
        onchange="toggleRegion('${g}')">
-       <span style="color:${REGION_COLOR[g]}">●</span> ${g}</label>`).join("")
+       <span style="color:${regionColor(g)}">●</span> ${g}</label>`).join("")
     + `<div style="margin-top:6px;color:var(--dim)">— exit &nbsp; ┄ conditional</div>`
     + (playRoom && W.rooms[playRoom]
        ? `<div style="margin-top:6px">&#128205; <a class="xr room"
@@ -671,14 +722,17 @@ function roomLookText(r) {
   svg.addEventListener("mousedown", e => {
     $("#maptip").style.display = "none";
     drag = { x: e.clientX, y: e.clientY, vb: svg.getAttribute("viewBox").split(" ").map(Number) };
+    mapDebug(`drag start: parsed vb=[${drag.vb.join(", ")}]`);
   });
   window.addEventListener("mousemove", e => {
     if (!drag) return;
     const vb = drag.vb, scale = vb[2] / svg.clientWidth;
-    svg.setAttribute("viewBox", `${vb[0] - (e.clientX - drag.x) * scale}
-      ${vb[1] - (e.clientY - drag.y) * scale} ${vb[2]} ${vb[3]}`);
+    svg.setAttribute("viewBox", `${vb[0] - (e.clientX - drag.x) * scale} ${vb[1] - (e.clientY - drag.y) * scale} ${vb[2]} ${vb[3]}`);
   });
-  window.addEventListener("mouseup", () => drag = null);
+  window.addEventListener("mouseup", () => {
+    if (drag) mapDebug(`drag end: viewBox now [${$("#map").getAttribute("viewBox")}]`);
+    drag = null;
+  });
   svg.addEventListener("wheel", e => {
     e.preventDefault();
     const vb = svg.getAttribute("viewBox").split(/\s+/).map(Number);
@@ -696,9 +750,11 @@ let visitedRooms = new Set(), playTrail = [];
 
 // room DESC text -> room name(s), for spotting the current room in output
 const DESC_INDEX = {};
-for (const [name, r] of Object.entries(W.rooms)) {
-  const d = (r.desc || "").trim();
-  if (d) (DESC_INDEX[d] ||= []).push(name);
+function buildDescIndex() {
+  for (const [name, r] of Object.entries(W.rooms)) {
+    const d = (r.desc || "").trim();
+    if (d) (DESC_INDEX[d] ||= []).push(name);
+  }
 }
 
 function detectRoom(text) {
@@ -754,7 +810,7 @@ async function playStart(restart) {
   termAppend("[starting game…]\n\n", "echo");
   playBusy = true;
   try {
-    const r = await playApi("api/new", { id: playId });
+    const r = await playApi("api/new", { id: playId, game: GAME });
     if (r.error) { termAppend(r.error + "\n", "err"); playId = null; return; }
     playId = r.id;
     termAppend(stripPrompt(r.output));
@@ -799,6 +855,7 @@ $("#restart").addEventListener("click", () => playStart(true));
 
 /* ------------------------------ wiring ------------------------------ */
 function render() {
+  if (!W) return;                       // world.js not loaded yet
   document.querySelectorAll("nav button").forEach(b =>
     b.classList.toggle("on", b.dataset.tab === tab));
   const isMap = tab === "map", isPlay = tab === "play";
@@ -816,9 +873,61 @@ function render() {
 document.querySelectorAll("nav button").forEach(b =>
   b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
 $("#search").addEventListener("input", e => { query = e.target.value; renderSidebar(); });
-$("#stats").textContent = `${Object.keys(W.rooms).length} rooms · `
-  + `${Object.keys(W.objects).length} objects · ${Object.keys(W.routines).length} routines`;
-render();
+
+/* ------------------------ game selection / boot ------------------------ */
+const DEFAULT_GAME = "sources/leathergoddesses-gold";
+let GAME = DEFAULT_GAME, GAMES = [];
+
+function initWorld() {
+  W = window.WORLD;
+  decorateEntries();
+  buildDescIndex();
+  document.title = (W.game || GAME) + " — World Browser";
+  $("#stats").textContent = `${Object.keys(W.rooms).length} rooms · `
+    + `${Object.keys(W.objects).length} objects · ${Object.keys(W.routines).length} routines`;
+  render();
+}
+
+function showGameList() {
+  $("#sidebar").style.display = "none";
+  $("#detail").innerHTML = `<h2>Games</h2>` + GAMES.map(g =>
+    `<p><a class="xr" href="?game=${encodeURIComponent(g.id)}">${esc(g.name)}</a>`
+    + (g.story === false
+       ? ' <span class="msg">(no story file — browse only)</span>' : "")
+    + `</p>`).join("");
+}
+
+async function boot() {
+  const param = new URLSearchParams(location.search).get("game");
+  try {
+    const r = await fetch("api/games");
+    GAMES = (await r.json()).games || [];
+  } catch (e) { GAMES = []; }          // no backend (e.g. file://)
+  if (!GAMES.length)
+    GAMES = [{ id: DEFAULT_GAME, name: "Leather Goddesses of Phobos (Solid Gold)" }];
+  const valid = param && GAMES.some(g => g.id === param);
+  const sel = $("#gamepick");
+  sel.innerHTML =
+    (valid ? "" : `<option value="" selected disabled>Choose a game…</option>`)
+    + GAMES.map(g =>
+      `<option value="${esc(g.id)}"${valid && g.id === param ? " selected" : ""}>${esc(g.name)}</option>`).join("");
+  sel.onchange = () => location.href = "?game=" + encodeURIComponent(sel.value);
+  if (!valid) {          // no game in the URL: show the list, load nothing
+    showGameList();
+    return;
+  }
+  GAME = param;
+  const script = document.createElement("script");
+  script.src = (location.protocol === "file:" ? "../" : "/") + GAME + "/world.js";
+  script.onload = initWorld;
+  script.onerror = () => {
+    $("#detail").innerHTML = `<h2>No world data for ${esc(GAME)}</h2>
+      <p>Generate it with:</p>
+      <pre class="src">python3 tools/build_viewer.py ${esc(GAME)}</pre>`;
+  };
+  document.head.appendChild(script);
+}
+boot();
 </script>
 </body>
 </html>

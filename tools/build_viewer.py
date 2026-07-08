@@ -1,25 +1,41 @@
 #!/usr/bin/env python3
-"""Parse the ZIL sources for Leather Goddesses of Phobos and emit
-viewer/world.js — a JSON snapshot of rooms, objects, routines and globals
-consumed by viewer/index.html.
+"""Parse a game's ZIL sources and emit world.js into its game folder —
+a JSON snapshot of rooms, objects, routines, globals, grammar and
+vocabulary consumed by the shared viewer/index.html.
 
-Usage:  python3 tools/build_viewer.py
+Usage:  python3 tools/build_viewer.py [game-dir]
+        (default game-dir: sources/leathergoddesses-gold)
 """
 
+import glob
 import json
 import os
 import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ZIL_FILES = [
-    "misc.zil", "parser.zil", "syntax.zil", "verbs.zil", "globals.zil",
-    "earth.zil", "mars.zil", "venus.zil", "cleveland.zil", "spaceship.zil",
-    "phobos.zil", "hints.zil", "x1.zil",
-]
+GAME_DIR = (sys.argv[1].strip("/") if len(sys.argv) > 1
+            else os.path.join("sources", "leathergoddesses-gold"))
 
+# fallback; overridden by the game's own <DIRECTIONS ...> form when found
 DIRECTIONS = ["NORTH", "NE", "EAST", "SE", "SOUTH", "SW", "WEST", "NW",
               "UP", "DOWN", "IN", "OUT"]
+
+
+def game_files():
+    """An explicit "zilFiles" list in game.json wins; else every *.zil
+    in the game folder."""
+    meta_path = os.path.join(ROOT, GAME_DIR, "game.json")
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                files = json.load(f).get("zilFiles")
+            if files:
+                return files
+        except ValueError:
+            pass
+    return sorted(os.path.basename(p)
+                  for p in glob.glob(os.path.join(ROOT, GAME_DIR, "*.zil")))
 
 
 # ---------------------------------------------------------------- tokenizer
@@ -276,7 +292,10 @@ def extract_props(node):
             continue
         pname = pkids[0].value.upper()
         rest = pkids[1:]
-        if pname in DIRECTIONS:
+        if pname == "IN" and len(rest) == 1 and rest[0].kind == "atom":
+            # old-style location: (IN ROOMS) means LOC, not an exit
+            props.setdefault("LOC", []).append(rest[0].value)
+        elif pname in DIRECTIONS:
             ex = parse_exit(rest)
             ex["dir"] = pname
             exits.append(ex)
@@ -304,17 +323,36 @@ def main():
     voc_extra = []       # <VOC "WORD" PART>
     file_sources = {}
 
-    for fname in ZIL_FILES:
-        path = os.path.join(ROOT, fname)
+    files = game_files()
+    if not files:
+        print(f"no .zil files found in {GAME_DIR}", file=sys.stderr)
+        sys.exit(1)
+
+    parsed = {}
+    for fname in files:
+        path = os.path.join(ROOT, GAME_DIR, fname)
         with open(path, encoding="latin-1") as f:
             text = f.read()
         file_sources[fname] = text.split("\n")
         try:
-            top = parse_tokens(tokenize(text))
+            parsed[fname] = parse_tokens(tokenize(text))
         except Exception as e:
             print(f"parse error in {fname}: {e}", file=sys.stderr)
-            continue
 
+    # honor the game's own direction set (e.g. Zork adds LAND)
+    global DIRECTIONS
+    for top in parsed.values():
+        for node in top:
+            if node.kind != "form":
+                continue
+            kids = real_kids(node)
+            if kids and kids[0].kind == "atom" \
+                    and kids[0].value.upper() == "DIRECTIONS":
+                dirs = [k.value.upper() for k in kids[1:] if k.kind == "atom"]
+                if dirs:
+                    DIRECTIONS = dirs
+
+    for fname, top in parsed.items():
         for node in top:
             if node.kind != "form" or not node.value:
                 continue
@@ -351,7 +389,7 @@ def main():
                                                 "GLOBAL", "THINGS",
                                                 "PSEUDO")},
                 }
-                if head == "ROOM":
+                if head == "ROOM" or entry["loc"] == "ROOMS":
                     entry["exits"] = exits
                     rooms[name] = entry
                 else:
@@ -513,12 +551,10 @@ def main():
         "globals": globals_,
         "syntax": syntax,
         "vocab": vocab,
-        "files": ZIL_FILES,
+        "files": files,
     }
 
-    out_dir = os.path.join(ROOT, "viewer")
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "world.js")
+    out_path = os.path.join(ROOT, GAME_DIR, "world.js")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("window.WORLD = ")
         json.dump(world, f, indent=1)

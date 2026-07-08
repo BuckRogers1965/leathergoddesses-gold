@@ -1,32 +1,37 @@
-# Leather Goddesses of Phobos (Solid Gold Edition) — Source + Explorer
+# Infocom Source Explorer
 
-The complete ZIL source code of Steve Meretzky's 1988 Infocom classic,
-wrapped in modern tooling: a browser-based world explorer, a playable
-in-browser game backed by a real Z-machine interpreter, and a build
-pipeline using the modern ZILF toolchain.
+A browser-based study tool for the Infocom source code archive: some thirty
+games' worth of original ZIL source — Zork to Trinity to Leather Goddesses
+of Phobos — organized into one repository, parsed into a navigable world
+model, and served by a single small server. Browse every room, object,
+routine, grammar rule, and dictionary word; follow cross-references through
+the code; and run the shipped builds side-by-side with their source for
+verification.
 
 <p align="center">
-  <img src="screenshots/map.png"    width="49%" alt="Map tab — force-directed graph of all 75 rooms, colored by region">
+  <img src="screenshots/map.png"    width="49%" alt="Map tab — force-directed graph of a game's rooms, colored by source file">
   <img src="screenshots/room.png"   width="49%" alt="Room browser — exits, objects, and syntax-highlighted ZIL source">
 </p>
 <p align="center">
   <img src="screenshots/syntax.png" width="49%" alt="Syntax tab — the verb grammar with actions and pre-actions">
-  <img src="screenshots/play.png"   width="49%" alt="Play tab — the real game running in dfrotz, with live room tracking">
+  <img src="screenshots/play.png"   width="49%" alt="Play tab — the shipped build running in dfrotz, with live room tracking">
 </p>
 
-The original historical README claimed there was "no known way to compile"
-this source. Today the modern ZILF toolchain (`zilf` + `zapf`) targets
-exactly this dialect, and this repo carries what appear to be its
-intermediates plus a compiled story file — but be honest about the record:
-**a from-source build has never been verified in this repo's documented
-history.** The included `COMPILED/x1.z5` and the `.zap` intermediates came
-with the 2019 historicalsource archive import — off the Infocom drive
-itself — and the story file identifies as **Release 4 / Serial 880405**,
-the official Solid Gold release: an authentic Infocom ZILCH build, not a
-modern reconstruction. What IS verified: the game runs, and the source is
-fully browsable. (To attempt a modern compile yourself: install ZILF,
-delete `COMPILED/x1.z5`, and run `bash tools/start.sh` — it rebuilds from
-source and tells you how it went.)
+## What this is
+
+This began as a fork of `historicalsource/leathergoddesses-gold` (the
+repository keeps that name) and grew into an organized mirror of the
+sibling archives: each game's source lives unmodified in
+`sources/<game>/`, exactly as published in the individual historicalsource
+repositories since 2019. Everything else — the parser, the viewer, the
+server — is original tooling built around that material.
+
+The **Play tab** exists as the verification instrument for the source
+viewer: it runs a game's shipped story file (present in the archives)
+through the stock `dfrotz` interpreter, so the source on screen can be
+checked against the behavior that actually shipped — release stamps,
+room-by-room correspondence, and eventually full differential testing
+(see ROADMAP.md).
 
 ## Requirements
 
@@ -36,31 +41,22 @@ source and tells you how it went.)
   - Debian/Ubuntu: `sudo apt install frotz` (installs `/usr/games/dfrotz`)
   - macOS: `brew install frotz`
   - elsewhere: set `DFROTZ=/path/to/dfrotz` in the environment
-- optional: the [ZILF](https://foss.heptapod.net/zilf/zilf) toolchain
-  (`zilf` + `zapf`), only if you want to try rebuilding the story file
-  from source — a compiled story file is already included
+- optional: the [ZILF](https://foss.heptapod.net/zilf/zilf) toolchain, only
+  for experiments in recompiling ZIL from source
 
 ## Running it
 
-**Step 1 — scan the ZIL source and build the world model:**
+**Step 1 — build a game's world model** (parses its ZIL into `world.js`):
 
 ```
-python3 tools/build_viewer.py
+python3 tools/build_viewer.py sources/zork1
 ```
 
-This parses all thirteen `.zil` files and extracts everything the explorer
-navigates — rooms, objects, exits (with their conditions), routines with
-their source text, globals, constants, the verb grammar, and the full
-vocabulary — into `viewer/world.js`. It prints a summary when it's done:
+or all games at once:
 
 ```
-rooms: 75  objects: 192  routines: 783  globals: 343  verbs: ...  words: ...
-wrote .../viewer/world.js
+for d in sources/*/; do python3 tools/build_viewer.py "${d%/}"; done
 ```
-
-A pre-generated `world.js` ships in the repo, so this step is only
-*required* after you edit a `.zil` file — but run it once anyway to see
-the pipeline work.
 
 **Step 2 — start the server:**
 
@@ -68,98 +64,82 @@ the pipeline work.
 python3 tools/server.py
 ```
 
-**Step 3 —** browse to `http://<server-ip>:8083/`.
+**Step 3 —** browse to `http://<server-ip>:8083/` and pick a game.
 
-By default the server binds **0.0.0.0:8083** — reachable from every
-machine on your network, not just localhost. To change either:
+By default the server binds **0.0.0.0:8083** (reachable on your network);
+use `--bind 127.0.0.1` for localhost-only or `--port` to move it.
+`bash tools/start.sh` wraps the same server with dependency checks and a
+`--background` daemon mode. **RUNNING.md** is the always-current authority.
 
-```
-python3 tools/server.py --port 9000            # different port
-python3 tools/server.py --bind 127.0.0.1       # localhost only
-```
-
-`bash tools/start.sh` does the same thing with guard rails: it checks
-dfrotz is installed, rebuilds the story file from source if it's missing
-(needs ZILF), refuses to start if the port is taken, and accepts the same
-`--port`/`--bind` flags plus `--background` to daemonize (writes
-`server.pid`/`server.log`; stop with `kill $(cat server.pid)`).
-
-In-game saves land in `saves/`.
-
-**RUNNING.md** is the always-current authority if these instructions
-ever drift.
-
-## What you get in the browser
+## The browser
 
 | Tab | What it shows |
 |---|---|
-| **Map** | Force-directed graph of all 75 rooms, color-coded by region (Earth, Mars, Venus, Cleveland, Spaceship, Phobos). Dashed edges are conditional exits. Pan, zoom, click through to any room. |
-| **Rooms** | Every room: description, exit table (destinations, `IF` conditions, blocking messages), objects present, scenery, flags, and its full syntax-highlighted ZIL action routine. |
-| **Objects** | All 192 objects: location, synonyms/adjectives, flags, containment, action routines. |
-| **Routines** | All 783 routines with cross-linked source — every known name in any listing is clickable, and each entity lists which routines reference it. |
-| **Globals** | All globals and constants with their values. |
-| **Syntax** | The verb grammar: every `<SYNTAX>` production with its action and pre-action routines, plus verb synonyms. |
-| **Vocab** | Every word the game's parser knows, with all of its roles (verb, noun of which object, adjective, preposition, buzzword…). |
-| **Play** | The actual game, running in `dfrotz` on the server, one session per browser. A live location chip tracks the room you're standing in — one click jumps from gameplay to that room's source code. |
+| **Map** | Force-directed graph of the selected game's rooms, colored by source file. Conditional exits are dashed. Pan, zoom, hover for room descriptions, click through to source. A debug toggle exposes the layout's live diagnostics. |
+| **Rooms** | Every room: description, exit table (destinations, conditions, blocking messages), objects present, flags, and the room's syntax-highlighted ZIL action routine. |
+| **Objects** | Every object: location, synonyms/adjectives, flags, containment, action routines. |
+| **Routines** | All routines with cross-linked source — every known name in any listing is clickable, and each entity lists which routines reference it. |
+| **Globals** | Globals and constants with their values. |
+| **Syntax** | The verb grammar: every `<SYNTAX>` production with its action and pre-action routines. |
+| **Vocab** | Every word the game's parser knows, with all of its roles. |
+| **Play** | The shipped build running in `dfrotz` on the server, one session per browser. A live location chip tracks the current room; the map highlights where you are, what you've visited, and your route. |
 
 ## How it works
 
 ```
-browser ── HTTP :8083 ──> tools/server.py ── pipes ──> dfrotz ── COMPILED/x1.z5
+browser ── HTTP :8083 ──> tools/server.py ── pipes ──> dfrotz ── <game story file>
                               │
-                              └── serves viewer/ (index.html + world.js)
+                              ├── serves viewer/index.html (shared, all games)
+                              └── /api/games: every folder with a game.json
 
-*.zil ──> tools/build_viewer.py ──> viewer/world.js   (the parsed world model)
-*.zil ──> zilf + zapf ──> COMPILED/x1.z5              (the playable story file)
+<game>/*.zil ──> tools/build_viewer.py ──> <game>/world.js   (parsed world model)
 ```
 
-- `tools/build_viewer.py` — a ZIL parser (Python, stdlib only) that extracts
-  rooms, objects, exits, routines, globals, constants, verb grammar, and
-  vocabulary into `viewer/world.js`. Rerun it after editing any `.zil`.
-- `tools/server.py` — one server (Python, stdlib only): static files plus a
-  JSON API (`/api/new`, `/api/send`, `/api/health`) driving per-session
-  `dfrotz` subprocesses. Game saves land in `saves/`.
+- `sources/<game>/game.json` is the contract: `{"name": ..., "story": ...}`.
+  A folder without one is not part of the project; nothing is auto-detected.
+- `tools/build_viewer.py` — a ZIL parser (Python, stdlib only) covering both
+  Infocom house styles: classic `<ROOM>` forms and the post-1985
+  `<OBJECT ... (LOC ROOMS)>` idiom, with each game's own `<DIRECTIONS>` set.
+- `tools/server.py` — one server: static files plus a JSON API driving
+  per-session `dfrotz` subprocesses. Saves land in `saves/<game>/`.
 - `viewer/index.html` — the whole GUI, one self-contained file, no
   frameworks, no build step.
 
-## The game source
+## Adding a game
 
-Written in ZIL (Zork Implementation Language), a LISP/MDL dialect used by
-Infocom. Layout: `x1.zil` is the main file; regions live in `earth.zil`,
-`mars.zil`, `venus.zil`, `cleveland.zil`, `spaceship.zil`, `phobos.zil`;
-the engine is `parser.zil`, `syntax.zil`, `verbs.zil`, `globals.zil`,
-`misc.zil`; `hints.zil` is the Solid Gold in-game hint system. The `.zap`
-files are compiler intermediates. The game's three content modes
-(TAME/SUGGESTIVE/LEWD) are all in the source.
+1. Put its source in `sources/<name>/` (with its story file, if any)
+2. Write `sources/<name>/game.json` — `{"name": "Title", "story": "path"}`
+3. `python3 tools/build_viewer.py sources/<name>`
+4. Restart the server; it appears in the picker
 
-Numbers: 75 rooms · 192 objects · 783 routines · 166 globals ·
-177 constants · ~480 grammar productions.
+## A provenance note
 
-## Where this is going
-
-See **ROADMAP.md**: differential verification against the official 1988
-release, a source-level ZIL interpreter with live editing, an English→Zork
-translation layer, and voice play. The guiding principles: one server, one
-port; never guess what the source declares; the compiled game is the
-oracle, the source is the deliverable.
+The archive's story files are, in at least one verified case, the genuine
+shipped article: Leather Goddesses of Phobos's build identifies as
+**Release 4 / Serial 880405** — the official Solid Gold master, present on
+the Infocom drive at shutdown and byte-pristine since the 2019 archive
+import. Where that holds, the shipped binary can serve as a first-class
+oracle for verifying the source (and any future translation of it) by
+behavior. See ROADMAP.md for where that leads: source-level interpretation,
+in-browser editing, and cross-compilation of ZIL into modern engines.
 
 ## Provenance & license
 
-The ZIL source is from the anonymously-contributed snapshot of Infocom's
-development systems (the "historical source" archives) — canonical but not
-necessarily identical to any shipped release. It is preserved here for
-education, discussion, and historical research, and is **not under an open
-license**; Leather Goddesses of Phobos is © 1986–1988 Infocom, Inc.
-(Activision).
+The game sources are mirrored from the anonymously-contributed snapshot of
+Infocom's development systems, as published in the individual
+`historicalsource` repositories — canonical but not necessarily identical
+to any shipped release. They are preserved here for education, discussion,
+and historical research, and are **not under an open license**; the games
+are © Infocom, Inc. (Activision).
 
 The tooling — everything under `tools/` and `viewer/` — is original work
 of this repository and is **MIT licensed** (see `tools/LICENSE` and
-`viewer/LICENSE`). The generated `viewer/world.js` contains game text and
-data extracted from the ZIL source; the MIT grant covers the extraction
-and viewer code, not that game content. There is deliberately no LICENSE
-file at the repo root, so nobody mistakes the game itself for open-source.
+`viewer/LICENSE`). Generated `world.js` files contain game text and data
+extracted from the sources; the MIT grant covers the extraction and viewer
+code, not that content. There is deliberately no LICENSE file at the repo
+root, so nobody mistakes the games themselves for open-source.
 
 Further reading:
-[Wikipedia](https://en.wikipedia.org/wiki/Leather_Goddesses_of_Phobos) ·
-[IFDB](https://ifdb.tads.org/viewgame?id=3p9fdt4fxr2goctw) ·
-[IFWiki](http://www.ifwiki.org/index.php/Leather_Goddesses_of_Phobos)
+[The Infocom source archives](https://github.com/historicalsource) ·
+[IFWiki](http://www.ifwiki.org/index.php/Infocom) ·
+[The Interactive Fiction Database](https://ifdb.tads.org/)

@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Viewer + play server for Leather Goddesses of Phobos.
+"""Multi-game viewer + play server.
 
-Serves the static world browser from viewer/ and runs the compiled game
-(COMPILED/x1.z5) through dfrotz subprocesses, one per browser session,
-exposed as a small JSON API:
+Layout: each game lives in <publisher>/<game>/ (e.g.
+sources/leathergoddesses-gold/) holding its ZIL source, the generated
+world.js, the compiled story file, and an optional game.json:
 
-    POST /api/new              -> {"id": ..., "output": intro text}
-    POST /api/send {id, cmd}   -> {"output": ..., "dead": bool}
-    GET  /api/health           -> {"dfrotz": path or null, "story": bool}
+    {"name": "Display Name", "story": "COMPILED/x1.z5"}
+
+The shared GUI is viewer/index.html; it lists the available games and
+loads the selected game's world.js. Games are discovered by scanning
+the publisher directories for folders containing a world.js.
+
+API:
+    GET  /api/games            -> {"games": [{"id", "name", "story"}]}
+    POST /api/new  {game, id?} -> {"id", "output", "dead"}
+    POST /api/send {id, cmd}   -> {"output", "dead"}
+    GET  /api/health           -> {"dfrotz": path|null, "games": n}
 
 Requires dfrotz (dumb frotz), part of the frotz package:
     Debian/Ubuntu:  sudo apt install frotz
@@ -18,6 +26,7 @@ Usage:  python3 tools/server.py [--port 8083] [--bind 0.0.0.0]
 """
 
 import argparse
+import glob
 import json
 import os
 import select
@@ -30,9 +39,8 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VIEWER_DIR = os.path.join(ROOT, "viewer")
-STORY = os.path.join(ROOT, "COMPILED", "x1.z5")
-SAVE_DIR = os.path.join(ROOT, "saves")
+PUBLISHERS = ["sources"]
+SAVE_ROOT = os.path.join(ROOT, "saves")
 SESSION_IDLE_LIMIT = 30 * 60          # reap sessions idle > 30 min
 
 
@@ -52,6 +60,38 @@ def find_dfrotz():
 
 
 DFROTZ = find_dfrotz()
+
+
+def list_games():
+    """Scan publisher dirs for game folders (anything with a world.js)."""
+    games = {}
+    for pub in PUBLISHERS:
+        base = os.path.join(ROOT, pub)
+        if not os.path.isdir(base):
+            continue
+        for name in sorted(os.listdir(base)):
+            gdir = os.path.join(base, name)
+            if not os.path.isfile(os.path.join(gdir, "game.json")):
+                continue            # no game.json = not part of the project
+            gid = f"{pub}/{name}"
+            meta = {}
+            mpath = os.path.join(gdir, "game.json")
+            if os.path.isfile(mpath):
+                try:
+                    with open(mpath, encoding="utf-8") as f:
+                        meta = json.load(f)
+                except ValueError:
+                    meta = {}
+            story = meta.get("story")
+            if story:
+                story = os.path.join(gdir, story)
+            games[gid] = {
+                "id": gid,
+                "name": meta.get("name", name),
+                "dir": gdir,
+                "story": story,
+            }
+    return games
 
 
 class Session:
@@ -91,16 +131,15 @@ def read_output(proc, quiet=0.35, overall=6.0):
     return "".join(chunks)
 
 
-def spawn_game():
-    os.makedirs(SAVE_DIR, exist_ok=True)
-    proc = subprocess.Popen(
-        [DFROTZ, "-m", "-p", "-w", "80", STORY],
+def spawn_game(story, save_dir):
+    os.makedirs(save_dir, exist_ok=True)
+    return subprocess.Popen(
+        [DFROTZ, "-m", "-p", "-w", "80", story],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        cwd=SAVE_DIR,                # SAVE/RESTORE files land in saves/
+        cwd=save_dir,                # SAVE/RESTORE files land per game
     )
-    return proc
 
 
 def reap_idle():
@@ -126,15 +165,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_OPTIONS(self):
-        # CORS preflight, so the Play tab works even when the page was
-        # opened from a different origin (file://, preview panel, etc.)
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
     def _body(self):
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
@@ -144,11 +174,33 @@ class Handler(SimpleHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             return {}
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
     def do_GET(self):
-        if self.path == "/api/health":
-            self._json({"dfrotz": DFROTZ, "story": os.path.isfile(STORY)})
+        path = self.path.split("?", 1)[0]      # ignore the query string
+        if path == "/api/health":
+            self._json({"dfrotz": DFROTZ, "games": len(list_games())})
+            return
+        if path == "/api/games":
+            self._json({"games": [
+                {"id": g["id"], "name": g["name"], "story": bool(g["story"])}
+                for g in list_games().values()]})
+            return
+        if path in ("/", "/index.html"):
+            self.path = "/viewer/index.html"
+        if path.startswith("/.git") or path.startswith("/saves"):
+            self.send_error(404)
             return
         super().do_GET()
+
+    def list_directory(self, path):
+        self.send_error(404)                   # no browsable listings
+        return None
 
     def do_POST(self):
         reap_idle()
@@ -162,15 +214,23 @@ class Handler(SimpleHTTPRequestHandler):
     def api_new(self):
         if not DFROTZ:
             self._json({"error": "dfrotz not found. Install with "
-                        "'brew install frotz' or set DFROTZ=/path/to/dfrotz "
-                        "and restart the server."}, 500)
+                        "'sudo apt install frotz' or set DFROTZ=/path/to/"
+                        "dfrotz and restart the server."}, 500)
             return
-        if not os.path.isfile(STORY):
-            self._json({"error": f"story file missing: {STORY}"}, 500)
+        data = self._body()
+        games = list_games()
+        gid = data.get("game")
+        game = games.get(gid) or (next(iter(games.values())) if games else None)
+        if game is None:
+            self._json({"error": "no games found under "
+                        + "/".join(PUBLISHERS)}, 500)
             return
-        # replace this browser's previous session, if any
-        old = self._body().get("id")
-        if old:
+        if not game["story"]:
+            self._json({"error": f"no story file for {game['id']} — "
+                        "add one (see game.json) or rebuild it."}, 500)
+            return
+        old = data.get("id")
+        if old:                       # replace this browser's old session
             with SESSIONS_LOCK:
                 s = SESSIONS.pop(old, None)
             if s:
@@ -178,8 +238,9 @@ class Handler(SimpleHTTPRequestHandler):
                     s.proc.kill()
                 except OSError:
                     pass
+        save_dir = os.path.join(SAVE_ROOT, game["id"].replace("/", "_"))
         try:
-            proc = spawn_game()
+            proc = spawn_game(game["story"], save_dir)
         except OSError as e:
             self._json({"error": f"failed to start dfrotz: {e}"}, 500)
             return
@@ -229,12 +290,16 @@ def main():
         print(f"dfrotz: {DFROTZ}")
     else:
         print("WARNING: dfrotz not found — the Play tab will not work.")
-        print("         Install with 'brew install frotz' or set DFROTZ=...")
-    print(f"story:  {STORY} ({'ok' if os.path.isfile(STORY) else 'MISSING'})")
-    print(f"saves:  {SAVE_DIR}")
-    print(f"serving http://{args.bind}:{args.port}/ from {VIEWER_DIR}")
+        print("         Install with 'sudo apt install frotz' or set DFROTZ=")
+    games = list_games()
+    print(f"games:  {len(games)}")
+    for g in games.values():
+        print(f"  - {g['id']}: {g['name']} "
+              f"({'story ok' if g['story'] else 'NO STORY FILE'})")
+    print(f"saves:  {SAVE_ROOT}")
+    print(f"serving http://{args.bind}:{args.port}/ from {ROOT}")
 
-    handler = partial(Handler, directory=VIEWER_DIR)
+    handler = partial(Handler, directory=ROOT)
     ThreadingHTTPServer((args.bind, args.port), handler).serve_forever()
 
 

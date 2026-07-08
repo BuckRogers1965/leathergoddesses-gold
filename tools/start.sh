@@ -18,7 +18,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STORY="$ROOT/COMPILED/x1.z5"
+GAME_DIR="$ROOT/sources/leathergoddesses-gold"
+STORY="$GAME_DIR/COMPILED/x1.z5"
 PORT=8083
 BIND=0.0.0.0
 BACKGROUND=0
@@ -68,16 +69,16 @@ if [ -f "$STORY" ]; then
 elif command -v zilf >/dev/null 2>&1 && command -v zapf >/dev/null 2>&1; then
     echo "[2/3] $STORY missing — rebuilding from ZIL source with zilf/zapf..."
     (
-        cd "$ROOT" || exit 1
+        cd "$GAME_DIR" || exit 1
         zilf x1.zil && zapf x1.zap
     )
     # zapf names its output x1.z5 (or x1.zip with older versions)
     BUILT=""
-    for f in "$ROOT/x1.z5" "$ROOT/x1.zip"; do
-        [ -f "$f" ] && [ "$f" -nt "$ROOT/x1.zil" ] && BUILT="$f" && break
+    for f in "$GAME_DIR/x1.z5" "$GAME_DIR/x1.zip"; do
+        [ -f "$f" ] && [ "$f" -nt "$GAME_DIR/x1.zil" ] && BUILT="$f" && break
     done
     if [ -n "$BUILT" ]; then
-        mkdir -p "$ROOT/COMPILED"
+        mkdir -p "$GAME_DIR/COMPILED"
         cp "$BUILT" "$STORY"
         echo "      built and installed: $STORY (from $BUILT)"
     else
